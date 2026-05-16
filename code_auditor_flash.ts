@@ -1,8 +1,6 @@
-import { generateId } from './utils';
-
-// We mock TaskHandler and TaskTypeDefinition as they are not provided
-export type TaskHandler = any;
-export type TaskTypeDefinition = any;
+import type { TaskHandler } from '../task-handler';
+import type { TaskTypeDefinition } from '../task-types';
+import { generateId } from '../utils';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CONSTANTS & ENUMS  —  Compile-time dispatch, zero allocation hot path
@@ -80,7 +78,7 @@ interface FlushBuffers {
 }
 
 /** Event type codes — const enum for inline substitution */
-export const EVT = {
+const EVT = {
   START:  0,
   CHUNK:  1,
   END:    2,
@@ -94,11 +92,11 @@ export const EVT = {
  *    - If used across Workers/threads, wrap enqueue in Atomics-based queue
  *    - Watermark system prevents silent data loss from wrap-around
  */
-export class SoaEventBus {
-  public soa: EventSoA;
-  public head = 0;      // read cursor  — ONLY consumer touches
-  public tail = 0;      // write cursor — ONLY producer touches
-  public pending = 0;   // cached (tail - head) to avoid recompute
+class SoaEventBus {
+  private soa: EventSoA;
+  private head = 0;      // read cursor  — ONLY consumer touches
+  private tail = 0;      // write cursor — ONLY producer touches
+  private pending = 0;   // cached (tail - head) to avoid recompute
   private flushBuf: FlushBuffers;
   private lastFlushTime = 0;
   private droppedCount = 0;   // metrics: backpressure drops
@@ -245,7 +243,7 @@ export class SoaEventBus {
   }
 
   /** Survival mode: advance head to make room. Consumer loses oldest data. */
-  public dropOldest(n: number): void {
+  private dropOldest(n: number): void {
     // FIX: clear references to avoid memory retention leaks (SEV-1)
     for (let i = 0; i < n; i++) {
         const idx = (this.head + i) & RING_MASK;
@@ -293,10 +291,10 @@ interface PooledTaskContext {
   eventCount: number;
 }
 
-export const hotPool: PooledTaskContext[] = [];
-export const coldPool: PooledTaskContext[] = [];
+const hotPool: PooledTaskContext[] = [];
+const coldPool: PooledTaskContext[] = [];
 
-export function allocContext(taskId: string): PooledTaskContext {
+function allocContext(taskId: string): PooledTaskContext {
   // Hot path: O(1) pop from hot pool
   if (hotPool.length > 0) {
     const ctx = hotPool.pop()!;
@@ -313,7 +311,7 @@ export function allocContext(taskId: string): PooledTaskContext {
   return createFreshContext(taskId);
 }
 
-export function freeContext(ctx: PooledTaskContext): void {
+function freeContext(ctx: PooledTaskContext): void {
   // Clear references to avoid memory leaks before returning to pool
   ctx.artifacts.length = 0;
   ctx.eventCount = 0;
@@ -328,7 +326,7 @@ export function freeContext(ctx: PooledTaskContext): void {
 }
 
 /** Inline reset — no allocation, just scalar writes */
-export function resetContext(ctx: PooledTaskContext, taskId: string): void {
+function resetContext(ctx: PooledTaskContext, taskId: string): void {
   ctx.taskId = taskId;
   ctx.progressCurrent = 0;
   ctx.progressTotal = 100;
@@ -360,4 +358,164 @@ export function trimColdPool(target = 64): void {
   while (coldPool.length > target) {
     coldPool.pop();
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BRANCHLESS PROGRESS MATH  —  Bounds-checked, no silent corruption
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Compute progress bounds using pure arithmetic.
+ *  Throws on out-of-bounds to catch corruption early. */
+function progressBounds(phaseIdx: number): [number, number] {
+  // Bounds check — branch-predicted cold path
+  if (phaseIdx < 0 || phaseIdx >= PHASE_COUNT) {
+    throw new RangeError(
+      `progressBounds: phaseIdx ${phaseIdx} out of range [0, ${PHASE_COUNT})`
+    );
+  }
+  const inv = 100 / (PHASE_COUNT - 1); // ~20
+  const start = phaseIdx * inv;
+  const end   = (phaseIdx + 1) * inv;
+  return [start | 0, end | 0]; // bitwise floor
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TASK DEFINITION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const codeReviewTaskDefinition: TaskTypeDefinition = {
+  id: 'code_review',
+  name: 'Code Review',
+  description: 'Perform an in-depth code review for best practices, security, and performance.',
+  category: 'analysis',
+  parameters: [
+    { name: 'targetPath', type: 'file_path', description: 'Path to review', required: true }
+  ],
+  routing: {
+    timeoutMs: 300_000,
+    maxRetries: 1,
+    cacheable: true,
+    cacheTtlMs: 3_600_000,
+    parallelPhases: false,
+    checkpointInterval: 30_000,
+  },
+  phases: [...PHASE_NAMES],
+  ui: {
+    icon: '👀',
+    color: THEME_COLOR,
+    showProgressBar: true,
+    showArtifacts: true,
+    allowPause: true,
+  },
+  status: 'available',
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HANDLER  —  Zero-allocation hot path, SOA event bus, pooled context
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const bus = new SoaEventBus();
+
+export const codeReviewHandler: TaskHandler = {
+  definition: codeReviewTaskDefinition,
+
+  canHandle: (args): boolean =>
+    typeof args === 'object' &&
+    args !== null &&
+    'targetPath' in args &&
+    typeof (args as Record<string, unknown>).targetPath === 'string' &&
+    (args as Record<string, unknown>).targetPath !== '',
+
+  estimateComplexity: () => 50,
+
+  executePhase: async (phase, ctx) => {
+    // ── Phase dispatch via validated enum index ──
+    const phaseIdx = PHASE_NAMES.indexOf(phase as typeof PHASE_NAMES[number]);
+    if (phaseIdx < 0) {
+      throw new Error(`Unknown phase: ${phase}`);
+    }
+
+    const stepId = `rev-${phase}-${generateId()}`;
+    const [pStart, pEnd] = progressBounds(phaseIdx);
+
+    ctx.reportProgress(pStart, 100, `Phase: ${phase}...`);
+
+    // ── Delayed phase logic — think lifecycle ──
+    const delay = PHASE_DELAY_MS[phaseIdx];
+    if (delay > 0) {
+      const label = thinkLabel(phaseIdx);
+      const desc  = thinkDesc(phaseIdx);
+
+      // Only emit think events when content exists — avoids undefined payload
+      if (label !== null) {
+        bus.enqueue(stepId, EVT.START, Date.now(), AGENT_ID, label, null);
+      }
+      if (desc !== null) {
+        bus.enqueue(stepId, EVT.CHUNK, Date.now(), AGENT_ID, null, desc);
+      }
+      bus.enqueue(stepId, EVT.END, Date.now(), AGENT_ID, null, null);
+
+      await sleep(delay, ctx.abortSignal);
+    }
+
+    // ── Phase side-effects ──
+    if (phaseIdx === PHASE.EXECUTING) {
+      ctx.registerArtifact({
+        name: 'review-report.md',
+        type: 'report',
+        content: '## Code Review Report\n- Linter passed\n- Potential memory leak found in `SessionManager`',
+      });
+    }
+
+    if (phaseIdx === PHASE.PRESENTING) {
+      ctx.reportProgress(100, 100, 'Presenting results...');
+    }
+
+    // ── Drain events at phase boundary ──
+    bus.drain();
+
+    const nextName = PHASE_NAMES[PHASE_NEXT[phaseIdx]];
+    const output = phaseIdx === PHASE.PRESENTING ? 'Code review selesai.' : undefined;
+
+    return { nextPhase: nextName, ...(output && { output }) };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HELPERS  —  Lookup tables, explicit null for no-ops, no undefined leakage
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const THINK_LABELS: (string | null)[] = [
+  'Code Scan',
+  'Review Planning',
+  'Code Execution Review',
+  null,  // validating — explicit no-op
+  null,  // presenting
+  null,  // completed
+];
+
+const THINK_DESCS: (string | null)[] = [
+  'Memulai pemindaian file... Saya akan memeriksa pola kerentanan umum dan pelanggaran linting.',
+  'Menyusun daftar prioritas review. @Lumina saya fokus pada modul inti dulu ya.',
+  'Menganalisis alur eksekusi... Sepertinya ada potensi memory leak di singleton pattern ini.',
+  null, // validating
+  null, // presenting
+  null, // completed
+];
+
+function thinkLabel(idx: number): string | null {
+  // Bounds check via lookup — returns null (safe) rather than undefined (silent bug)
+  return (idx >= 0 && idx < PHASE_COUNT) ? THINK_LABELS[idx] : null;
+}
+
+function thinkDesc(idx: number): string | null {
+  return (idx >= 0 && idx < PHASE_COUNT) ? THINK_DESCS[idx] : null;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason); }, { once: true });
+  });
 }

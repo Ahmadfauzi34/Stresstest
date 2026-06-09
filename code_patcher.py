@@ -5,7 +5,7 @@ import sys
 
 def patch_code(file_path, target, new_body, create_backup=True):
     """
-    General code patching tool for JS, TS, CSS, and modern JS/TS variants.
+    General code patching tool for JS, TS, CSS, HTML, and modern variants.
     """
     if not os.path.exists(file_path):
         return f"Error: File {file_path} not found."
@@ -20,17 +20,13 @@ def patch_code(file_path, target, new_body, create_backup=True):
 
     patterns = []
 
-    if ext in ('.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs'):
+    # Modern JS/TS extension support (including HTML for script blocks)
+    if ext in ('.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs', '.html'):
         patterns = [
-            # Traditional function
             rf"(?P<prefix>(?:async\s+)?function\s+{target}\s*(?:<[^>]+>)?\s*\([^)]*\)(?:\s*:\s*[^{{]+)?\s*)\{{",
-            # Arrow function
             rf"(?P<prefix>(?:const|let|var)\s+{target}\s*(?::\s*[^=]+)?\s*=\s*(?:async\s*)?(?:<[^>]+>)?\s*(?:\([^)]*\)|[\w$]+)(?:\s*:\s*[^=]+)?\s*=>\s*)\{{",
-            # Class method or property assignment
             rf"(?P<prefix>(?:(?:static|async|public|private|protected)\s+)*{target}\s*(?:<[^>]+>)?\s*\([^)]*\)(?:\s*:\s*[^{{]+)?\s*)\{{",
-            # Property assignment: name: function() { or name: () => {
             rf"(?P<prefix>{target}\s*:\s*(?:async\s*)?(?:function\s*\([^)]*\)|(?:\([^)]*\)|[\w$]+)\s*=>)\s*)\{{",
-            # module.exports.name = function() {
             rf"(?P<prefix>(?:\w+\.)*{target}\s*=\s*(?:async\s*)?(?:function\s*\([^)]*\)|(?:\([^)]*\)|[\w$]+)\s*=>)\s*)\{{"
         ]
     elif ext == '.css':
@@ -85,7 +81,7 @@ def patch_code(file_path, target, new_body, create_backup=True):
             i += 1
             continue
 
-        # 2. Handle Regex Literals (JS/TS variants)
+        # 2. Handle Regex Literals (JS/TS/HTML script variants)
         if ext != '.css' and not in_string and not in_comment:
             if not in_regex:
                 if char == "/":

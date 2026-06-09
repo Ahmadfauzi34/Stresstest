@@ -3,14 +3,14 @@ import os
 import shutil
 import sys
 
-def patch_javascript_code(file_path, target_function, new_body, create_backup=True):
+def patch_code(file_path, target, new_body, create_backup=True):
     """
-    Upgraded skill to patch JavaScript functions in .html or .js files.
-    Supports: traditional, arrow, async, class methods, and multiline headers.
-    Handles: strings, comments, regex literals, and template literals.
+    General code patching tool for JS, TS, and CSS.
     """
     if not os.path.exists(file_path):
         return f"Error: File {file_path} not found."
+
+    ext = os.path.splitext(file_path)[1].lower()
 
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -18,15 +18,21 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
     except Exception as e:
         return f"Error reading file: {e}"
 
-    # Robust pattern for function headers (multi-line supported via re.DOTALL)
-    # 1. Traditional: function name(...) {
-    # 2. Arrow: const name = (...) => {
-    # 3. Class method: name(...) {
-    patterns = [
-        rf"(?P<prefix>(?:async\s+)?function\s+{target_function}\s*\([^)]*\)\s*)\{{",
-        rf"(?P<prefix>(?:const|let|var)\s+{target_function}\s*=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*=>\s*)\{{",
-        rf"(?P<prefix>(?:(?:static|async)\s+)*{target_function}\s*\([^)]*\)\s*)\{{"
-    ]
+    patterns = []
+
+    if ext in ('.js', '.ts', '.tsx', '.jsx'):
+        # Corrected regex by escaping double curly braces for f-string and fixing bracket nesting
+        patterns = [
+            rf"(?P<prefix>(?:async\s+)?function\s+{target}\s*(?:<[^>]+>)?\s*\([^)]*\)(?:\s*:\s*[^{{]+)?\s*)\{{",
+            rf"(?P<prefix>(?:const|let|var)\s+{target}\s*(?::\s*[^=]+)?\s*=\s*(?:async\s*)?(?:<[^>]+>)?\s*(?:\([^)]*\)|[\w$]+)(?:\s*:\s*[^=]+)?\s*=>\s*)\{{",
+            rf"(?P<prefix>(?:(?:static|async|public|private|protected)\s+)*{target}\s*(?:<[^>]+>)?\s*\([^)]*\)(?:\s*:\s*[^{{]+)?\s*)\{{"
+        ]
+    elif ext == '.css':
+        patterns = [
+            rf"(?P<prefix>(?:@[\w-]+\s+)?{re.escape(target)}\s*)\{{"
+        ]
+    else:
+        return f"Error: Unsupported file extension {ext}"
 
     match = None
     for pattern in patterns:
@@ -35,7 +41,7 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
             break
 
     if not match:
-        return f"Error: Function '{target_function}' not found in file."
+        return f"Error: '{target}' not found in file."
 
     start_index = match.end()
 
@@ -73,13 +79,10 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
             i += 1
             continue
 
-        # 2. Handle Regex Literals (Simplified heuristic)
-        # Regex usually follows (, =, :, [, !, or return
-        if not in_string and not in_comment:
+        # 2. Handle Regex Literals (JS/TS only)
+        if ext in ('.js', '.ts', '.tsx', '.jsx') and not in_string and not in_comment:
             if not in_regex:
                 if char == "/":
-                    # Look back to see if / is a division or regex
-                    # Very basic check: regex usually follows operators or keywords
                     lookback = content[max(0, i-20):i].strip()
                     if lookback and lookback[-1] in "(=:[!&|?~,;":
                         in_regex = True
@@ -95,12 +98,11 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
             i += 1
             continue
 
-        # 3. Handle Strings (and Template Literals)
+        # 3. Handle Strings
         if not in_string:
             if char in ("'", '"', '`'):
                 in_string = char
         elif char == in_string:
-            # Check for escape
             backslash_count = 0
             j = i - 1
             while j >= 0 and content[j] == "\\":
@@ -125,7 +127,7 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
         i += 1
 
     if end_index == -1:
-        return f"Error: Failed to find closing brace for function {target_function}."
+        return f"Error: Failed to find closing brace for {target}."
 
     if create_backup:
         shutil.copy2(file_path, file_path + ".bak")
@@ -156,18 +158,18 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
     except Exception as e:
         return f"Error writing file: {e}"
 
-    return f"Success: Function '{target_function}' in '{file_path}' patched successfully."
+    return f"Success: '{target}' in '{file_path}' patched successfully."
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: python js_patcher.py <file_path> <target_function> <new_body_file>")
+        print("Usage: python code_patcher.py <file_path> <target> <new_body_file>")
         sys.exit(1)
 
     path = sys.argv[1]
-    func = sys.argv[2]
+    tgt = sys.argv[2]
     body_file = sys.argv[3]
 
     with open(body_file, 'r') as f:
         body = f.read()
 
-    print(patch_javascript_code(path, func, body))
+    print(patch_code(path, tgt, body))

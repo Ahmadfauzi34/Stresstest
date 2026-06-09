@@ -6,7 +6,8 @@ import sys
 def patch_javascript_code(file_path, target_function, new_body, create_backup=True):
     """
     Upgraded skill to patch JavaScript functions in .html or .js files.
-    Supports: traditional functions, arrow functions, async functions, and class methods.
+    Supports: traditional, arrow, async, class methods, and multiline headers.
+    Handles: strings, comments, regex literals, and template literals.
     """
     if not os.path.exists(file_path):
         return f"Error: File {file_path} not found."
@@ -17,19 +18,19 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
     except Exception as e:
         return f"Error reading file: {e}"
 
-    # Patterns to match different function styles
+    # Robust pattern for function headers (multi-line supported via re.DOTALL)
+    # 1. Traditional: function name(...) {
+    # 2. Arrow: const name = (...) => {
+    # 3. Class method: name(...) {
     patterns = [
-        # traditional: function name() { ... } or async function name() { ... }
         rf"(?P<prefix>(?:async\s+)?function\s+{target_function}\s*\([^)]*\)\s*)\{{",
-        # arrow/expression: const name = (...) => { ... }
         rf"(?P<prefix>(?:const|let|var)\s+{target_function}\s*=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*=>\s*)\{{",
-        # class method: name() { ... } or static name() { ... } or async name() { ... }
         rf"(?P<prefix>(?:(?:static|async)\s+)*{target_function}\s*\([^)]*\)\s*)\{{"
     ]
 
     match = None
     for pattern in patterns:
-        match = re.search(pattern, content)
+        match = re.search(pattern, content, re.DOTALL)
         if match:
             break
 
@@ -38,30 +39,32 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
 
     start_index = match.end()
 
-    # Bracket matching with string and comment awareness
     bracket_count = 1
     end_index = -1
-    in_string = None # ", ', or `
-    in_comment = None # // or /*
+    in_string = None
+    in_comment = None
+    in_regex = False
 
     i = start_index
     while i < len(content):
         char = content[i]
+        next_char = content[i+1] if i+1 < len(content) else ""
+        prev_char = content[i-1] if i > 0 else ""
 
-        # Handle comments
-        if not in_string:
+        # 1. Handle Comments
+        if not in_string and not in_regex:
             if not in_comment:
-                if content[i:i+2] == "//":
+                if char == "/" and next_char == "/":
                     in_comment = "//"
                     i += 2
                     continue
-                elif content[i:i+2] == "/*":
+                elif char == "/" and next_char == "*":
                     in_comment = "/*"
                     i += 2
                     continue
             elif in_comment == "//" and char == "\n":
                 in_comment = None
-            elif in_comment == "/*" and content[i:i+2] == "*/":
+            elif in_comment == "/*" and char == "*" and next_char == "/":
                 in_comment = None
                 i += 2
                 continue
@@ -70,25 +73,47 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
             i += 1
             continue
 
-        # Handle strings
+        # 2. Handle Regex Literals (Simplified heuristic)
+        # Regex usually follows (, =, :, [, !, or return
+        if not in_string and not in_comment:
+            if not in_regex:
+                if char == "/":
+                    # Look back to see if / is a division or regex
+                    # Very basic check: regex usually follows operators or keywords
+                    lookback = content[max(0, i-20):i].strip()
+                    if lookback and lookback[-1] in "(=:[!&|?~,;":
+                        in_regex = True
+                        i += 1
+                        continue
+            elif in_regex:
+                if char == "/" and prev_char != "\\":
+                    in_regex = False
+                    i += 1
+                    continue
+
+        if in_regex:
+            i += 1
+            continue
+
+        # 3. Handle Strings (and Template Literals)
         if not in_string:
             if char in ("'", '"', '`'):
                 in_string = char
         elif char == in_string:
-            # Check for escape: count backslashes before the quote
+            # Check for escape
             backslash_count = 0
             j = i - 1
             while j >= 0 and content[j] == "\\":
                 backslash_count += 1
                 j -= 1
-            if backslash_count % 2 == 0: # Even number of backslashes means the quote is NOT escaped
+            if backslash_count % 2 == 0:
                 in_string = None
 
         if in_string:
             i += 1
             continue
 
-        # Match brackets
+        # 4. Bracket Matching
         if char == '{':
             bracket_count += 1
         elif char == '}':
@@ -102,11 +127,9 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
     if end_index == -1:
         return f"Error: Failed to find closing brace for function {target_function}."
 
-    # Backup
     if create_backup:
         shutil.copy2(file_path, file_path + ".bak")
 
-    # Detect indentation of the line where the function starts
     line_start = content.rfind('\n', 0, match.start()) + 1
     indentation = ""
     for c in content[line_start:match.start()]:
@@ -115,7 +138,6 @@ def patch_javascript_code(file_path, target_function, new_body, create_backup=Tr
         else:
             break
 
-    # Prepare the new body with proper indentation
     indented_body = ""
     body_lines = new_body.strip('\n').split('\n')
     extra_indent = "    " if "\t" not in indentation else "\t"
@@ -144,10 +166,6 @@ if __name__ == "__main__":
     path = sys.argv[1]
     func = sys.argv[2]
     body_file = sys.argv[3]
-
-    if not os.path.exists(body_file):
-        print(f"Error: Body file {body_file} not found.")
-        sys.exit(1)
 
     with open(body_file, 'r') as f:
         body = f.read()

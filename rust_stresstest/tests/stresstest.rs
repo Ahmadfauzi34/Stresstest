@@ -109,6 +109,110 @@ impl HighLevelFunction for ParentFunction {
     }
 }
 
+// Dedicated generic executor for concurrent F11 active invocation tests
+fn run_f11_active_invocation_scenario(thread_count: usize, iterations: usize, with_sleep_ms: u64, id: String) {
+    struct TestFn {
+        id_str: String,
+        sleep_ms: u64,
+    }
+    impl HighLevelFunction for TestFn {
+        fn id(&self) -> String {
+            self.id_str.clone()
+        }
+        fn body(&self, _engine: &SecureEngineContext, _args: Vec<Val>) -> Result<Val, String> {
+            if self.sleep_ms > 0 {
+                thread::sleep(std::time::Duration::from_millis(self.sleep_ms));
+            }
+            Ok(Val::Null)
+        }
+    }
+
+    let engine = Arc::new(AdvancedJITEngine::new());
+    let func = Arc::new(TestFn { id_str: id.clone(), sleep_ms: with_sleep_ms });
+    let barrier = Arc::new(Barrier::new(thread_count));
+    let mut handles = vec![];
+
+    for _ in 0..thread_count {
+        let engine_clone = engine.clone();
+        let func_clone = func.clone();
+        let barrier_clone = barrier.clone();
+        handles.push(thread::spawn(move || {
+            barrier_clone.wait();
+            for _ in 0..iterations {
+                let _ = engine_clone.execute(func_clone.as_ref(), vec![]);
+            }
+        }));
+    }
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let active_map = engine.get_active_invocations_map();
+    assert_eq!(*active_map.get(&id).unwrap_or(&0), 0, "Dangling locks for {}", id);
+}
+
+// Define 50 explicit tests for F11 Active Invocation Lock
+macro_rules! define_f11_test {
+    ($name:ident, $thread_count:expr, $iterations:expr, $sleep:expr, $id:expr) => {
+        #[test]
+        fn $name() {
+            run_f11_active_invocation_scenario($thread_count, $iterations, $sleep, $id.to_string());
+        }
+    };
+}
+
+define_f11_test!(test_f11_scenario_01, 1, 10, 0, "f11_01");
+define_f11_test!(test_f11_scenario_02, 2, 10, 0, "f11_02");
+define_f11_test!(test_f11_scenario_03, 3, 10, 0, "f11_03");
+define_f11_test!(test_f11_scenario_04, 4, 10, 0, "f11_04");
+define_f11_test!(test_f11_scenario_05, 5, 10, 0, "f11_05");
+define_f11_test!(test_f11_scenario_06, 6, 10, 0, "f11_06");
+define_f11_test!(test_f11_scenario_07, 7, 10, 0, "f11_07");
+define_f11_test!(test_f11_scenario_08, 8, 10, 0, "f11_08");
+define_f11_test!(test_f11_scenario_09, 9, 10, 0, "f11_09");
+define_f11_test!(test_f11_scenario_10, 10, 10, 0, "f11_10");
+define_f11_test!(test_f11_scenario_11, 1, 5, 1, "f11_11");
+define_f11_test!(test_f11_scenario_12, 2, 5, 1, "f11_12");
+define_f11_test!(test_f11_scenario_13, 3, 5, 1, "f11_13");
+define_f11_test!(test_f11_scenario_14, 4, 5, 1, "f11_14");
+define_f11_test!(test_f11_scenario_15, 5, 5, 1, "f11_15");
+define_f11_test!(test_f11_scenario_16, 6, 5, 1, "f11_16");
+define_f11_test!(test_f11_scenario_17, 7, 5, 1, "f11_17");
+define_f11_test!(test_f11_scenario_18, 8, 5, 1, "f11_18");
+define_f11_test!(test_f11_scenario_19, 9, 5, 1, "f11_19");
+define_f11_test!(test_f11_scenario_20, 10, 5, 1, "f11_20");
+define_f11_test!(test_f11_scenario_21, 12, 4, 0, "f11_21");
+define_f11_test!(test_f11_scenario_22, 14, 4, 0, "f11_22");
+define_f11_test!(test_f11_scenario_23, 16, 4, 0, "f11_23");
+define_f11_test!(test_f11_scenario_24, 18, 4, 0, "f11_24");
+define_f11_test!(test_f11_scenario_25, 20, 4, 0, "f11_25");
+define_f11_test!(test_f11_scenario_26, 22, 4, 0, "f11_26");
+define_f11_test!(test_f11_scenario_27, 24, 4, 0, "f11_27");
+define_f11_test!(test_f11_scenario_28, 26, 4, 0, "f11_28");
+define_f11_test!(test_f11_scenario_29, 28, 4, 0, "f11_29");
+define_f11_test!(test_f11_scenario_30, 30, 4, 0, "f11_30");
+define_f11_test!(test_f11_scenario_31, 2, 20, 0, "f11_31");
+define_f11_test!(test_f11_scenario_32, 4, 20, 0, "f11_32");
+define_f11_test!(test_f11_scenario_33, 6, 20, 0, "f11_33");
+define_f11_test!(test_f11_scenario_34, 8, 20, 0, "f11_34");
+define_f11_test!(test_f11_scenario_35, 10, 20, 0, "f11_35");
+define_f11_test!(test_f11_scenario_36, 12, 15, 0, "f11_36");
+define_f11_test!(test_f11_scenario_37, 14, 15, 0, "f11_37");
+define_f11_test!(test_f11_scenario_38, 16, 15, 0, "f11_38");
+define_f11_test!(test_f11_scenario_39, 18, 15, 0, "f11_39");
+define_f11_test!(test_f11_scenario_40, 20, 15, 0, "f11_40");
+define_f11_test!(test_f11_scenario_41, 5, 2, 2, "f11_41");
+define_f11_test!(test_f11_scenario_42, 10, 2, 2, "f11_42");
+define_f11_test!(test_f11_scenario_43, 15, 2, 2, "f11_43");
+define_f11_test!(test_f11_scenario_44, 20, 2, 2, "f11_44");
+define_f11_test!(test_f11_scenario_45, 25, 2, 2, "f11_45");
+define_f11_test!(test_f11_scenario_46, 3, 30, 0, "f11_46");
+define_f11_test!(test_f11_scenario_47, 5, 30, 0, "f11_47");
+define_f11_test!(test_f11_scenario_48, 7, 30, 0, "f11_48");
+define_f11_test!(test_f11_scenario_49, 9, 30, 0, "f11_49");
+define_f11_test!(test_f11_scenario_50, 11, 30, 0, "f11_50");
+
 #[test]
 fn test_tier_m_calibration() {
     println!("=== Tier M: Meta-stresstest verification ===");

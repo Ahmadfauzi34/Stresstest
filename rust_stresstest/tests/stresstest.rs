@@ -213,6 +213,98 @@ define_f11_test!(test_f11_scenario_48, 7, 30, 0, "f11_48");
 define_f11_test!(test_f11_scenario_49, 9, 30, 0, "f11_49");
 define_f11_test!(test_f11_scenario_50, 11, 30, 0, "f11_50");
 
+// Dedicated generic executor for F8 Garbage Collector stress tests
+fn run_f8_gc_scenario(capacity: usize, overflow_count: usize, access_bonus_keys: Vec<usize>, scenario_id: String) {
+    let mut engine = AdvancedJITEngine::new();
+    engine.max_cache_size = capacity;
+
+    let mut functions = vec![];
+    for i in 0..(capacity + overflow_count) {
+        functions.push(HeavyLoopFunction { id_str: format!("f8_fn_{}_{}", scenario_id, i) });
+    }
+
+    // Compile all of them up to JIT threshold
+    for i in 0..(capacity + overflow_count) {
+        for _ in 0..4 {
+            let _ = engine.execute(&functions[i], vec![Val::Number(2.0)]);
+        }
+    }
+
+    // Access specific keys to give them second-chance (clock use bit)
+    for idx in access_bonus_keys {
+        if idx < functions.len() {
+            let _ = engine.execute(&functions[idx], vec![Val::Number(2.0)]);
+        }
+    }
+
+    // Explicitly force Garbage Collection
+    engine.force_gc();
+
+    // Verify cache size constraint
+    let queue = engine.get_clock_queue();
+    assert!(queue.len() <= capacity + 1, "GC failed to evict overflow cache items on scenario {}", scenario_id);
+}
+
+macro_rules! define_f8_test {
+    ($name:ident, $capacity:expr, $overflow:expr, $bonus:expr, $id:expr) => {
+        #[test]
+        fn $name() {
+            run_f8_gc_scenario($capacity, $overflow, $bonus, $id.to_string());
+        }
+    };
+}
+
+define_f8_test!(test_f8_scenario_01, 2, 2, vec![0], "f8_01");
+define_f8_test!(test_f8_scenario_02, 3, 2, vec![0, 1], "f8_02");
+define_f8_test!(test_f8_scenario_03, 4, 3, vec![1, 2], "f8_03");
+define_f8_test!(test_f8_scenario_04, 5, 4, vec![0, 2, 3], "f8_04");
+define_f8_test!(test_f8_scenario_05, 6, 2, vec![0, 1, 4], "f8_05");
+define_f8_test!(test_f8_scenario_06, 2, 5, vec![], "f8_06");
+define_f8_test!(test_f8_scenario_07, 3, 5, vec![0], "f8_07");
+define_f8_test!(test_f8_scenario_08, 4, 5, vec![1, 2], "f8_08");
+define_f8_test!(test_f8_scenario_09, 5, 5, vec![0, 3], "f8_09");
+define_f8_test!(test_f8_scenario_10, 6, 5, vec![0, 1, 2, 3], "f8_10");
+define_f8_test!(test_f8_scenario_11, 7, 2, vec![0], "f8_11");
+define_f8_test!(test_f8_scenario_12, 8, 2, vec![0, 1], "f8_12");
+define_f8_test!(test_f8_scenario_13, 9, 3, vec![1, 2], "f8_13");
+define_f8_test!(test_f8_scenario_14, 10, 4, vec![0, 2, 3], "f8_14");
+define_f8_test!(test_f8_scenario_15, 11, 2, vec![0, 1, 4], "f8_15");
+define_f8_test!(test_f8_scenario_16, 7, 5, vec![], "f8_16");
+define_f8_test!(test_f8_scenario_17, 8, 5, vec![0], "f8_17");
+define_f8_test!(test_f8_scenario_18, 9, 5, vec![1, 2], "f8_18");
+define_f8_test!(test_f8_scenario_19, 10, 5, vec![0, 3], "f8_19");
+define_f8_test!(test_f8_scenario_20, 11, 5, vec![0, 1, 2, 3], "f8_20");
+define_f8_test!(test_f8_scenario_21, 12, 2, vec![0], "f8_21");
+define_f8_test!(test_f8_scenario_22, 13, 2, vec![0, 1], "f8_22");
+define_f8_test!(test_f8_scenario_23, 14, 3, vec![1, 2], "f8_23");
+define_f8_test!(test_f8_scenario_24, 15, 4, vec![0, 2, 3], "f8_24");
+define_f8_test!(test_f8_scenario_25, 16, 2, vec![0, 1, 4], "f8_25");
+define_f8_test!(test_f8_scenario_26, 12, 5, vec![], "f8_26");
+define_f8_test!(test_f8_scenario_27, 13, 5, vec![0], "f8_27");
+define_f8_test!(test_f8_scenario_28, 14, 5, vec![1, 2], "f8_28");
+define_f8_test!(test_f8_scenario_29, 15, 5, vec![0, 3], "f8_29");
+define_f8_test!(test_f8_scenario_30, 16, 5, vec![0, 1, 2, 3], "f8_30");
+define_f8_test!(test_f8_scenario_31, 17, 2, vec![0], "f8_31");
+define_f8_test!(test_f8_scenario_32, 18, 2, vec![0, 1], "f8_32");
+define_f8_test!(test_f8_scenario_33, 19, 3, vec![1, 2], "f8_33");
+define_f8_test!(test_f8_scenario_34, 20, 4, vec![0, 2, 3], "f8_34");
+define_f8_test!(test_f8_scenario_35, 21, 2, vec![0, 1, 4], "f8_35");
+define_f8_test!(test_f8_scenario_36, 17, 5, vec![], "f8_36");
+define_f8_test!(test_f8_scenario_37, 18, 5, vec![0], "f8_37");
+define_f8_test!(test_f8_scenario_38, 19, 5, vec![1, 2], "f8_38");
+define_f8_test!(test_f8_scenario_39, 20, 5, vec![0, 3], "f8_39");
+define_f8_test!(test_f8_scenario_40, 21, 5, vec![0, 1, 2, 3], "f8_40");
+define_f8_test!(test_f8_scenario_41, 22, 2, vec![0], "f8_41");
+define_f8_test!(test_f8_scenario_42, 23, 2, vec![0, 1], "f8_42");
+define_f8_test!(test_f8_scenario_43, 24, 3, vec![1, 2], "f8_43");
+define_f8_test!(test_f8_scenario_44, 25, 4, vec![0, 2, 3], "f8_44");
+define_f8_test!(test_f8_scenario_45, 26, 2, vec![0, 1, 4], "f8_45");
+define_f8_test!(test_f8_scenario_46, 22, 5, vec![], "f8_46");
+define_f8_test!(test_f8_scenario_47, 23, 5, vec![0], "f8_47");
+define_f8_test!(test_f8_scenario_48, 24, 5, vec![1, 2], "f8_48");
+define_f8_test!(test_f8_scenario_49, 25, 5, vec![0, 3], "f8_49");
+define_f8_test!(test_f8_scenario_50, 26, 5, vec![0, 1, 2, 3], "f8_50");
+
 #[test]
 fn test_tier_m_calibration() {
     println!("=== Tier M: Meta-stresstest verification ===");

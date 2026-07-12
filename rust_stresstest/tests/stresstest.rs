@@ -1,4 +1,5 @@
 use rust_stresstest::{AdvancedJITEngine, HighLevelFunction, Val, SecureEngineContext};
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 use std::thread;
 use std::sync::{Arc, Barrier};
@@ -304,6 +305,120 @@ define_f8_test!(test_f8_scenario_47, 23, 5, vec![0], "f8_47");
 define_f8_test!(test_f8_scenario_48, 24, 5, vec![1, 2], "f8_48");
 define_f8_test!(test_f8_scenario_49, 25, 5, vec![0, 3], "f8_49");
 define_f8_test!(test_f8_scenario_50, 26, 5, vec![0, 1, 2, 3], "f8_50");
+
+// Dedicated generic executor for F10 Serialization stress tests
+fn run_f10_serialization_scenario(val: Val, expected_string: String, expect_too_deep: bool) {
+    let mut is_too_deep = false;
+    let res = val.serialize_arg(0, &mut is_too_deep);
+    assert_eq!(res, expected_string);
+    assert_eq!(is_too_deep, expect_too_deep);
+}
+
+// Generate nested recursive objects for deep tree tests
+fn create_nested_array(depth: usize) -> Val {
+    let mut current = Val::Null;
+    for _ in 0..depth {
+        current = Val::Array(vec![current]);
+    }
+    current
+}
+
+fn create_nested_object(depth: usize) -> Val {
+    let mut current = Val::Null;
+    for i in 0..depth {
+        let mut map = BTreeMap::new();
+        map.insert(format!("key_{}", i), current);
+        current = Val::Object(map);
+    }
+    current
+}
+
+macro_rules! define_f10_test {
+    ($name:ident, $val:expr, $expected:expr, $expect_too_deep:expr) => {
+        #[test]
+        fn $name() {
+            run_f10_serialization_scenario($val, $expected.to_string(), $expect_too_deep);
+        }
+    };
+}
+
+// 50 Dedicated F10 tests
+define_f10_test!(test_f10_scenario_01, Val::Null, "null", false);
+define_f10_test!(test_f10_scenario_02, Val::Undefined, "undefined", false);
+define_f10_test!(test_f10_scenario_03, Val::Boolean(true), "true", false);
+define_f10_test!(test_f10_scenario_04, Val::Boolean(false), "false", false);
+define_f10_test!(test_f10_scenario_05, Val::Number(100.25), "100.25", false);
+define_f10_test!(test_f10_scenario_06, Val::String("hello".to_string()), "hello", false);
+define_f10_test!(test_f10_scenario_07, Val::BigInt(12345678901234567890), "BigInt:12345678901234567890", false);
+define_f10_test!(test_f10_scenario_08, Val::Date(1620000000000), "Date:1620000000000", false);
+define_f10_test!(test_f10_scenario_09, Val::RegExp("^[a-z]+$".to_string()), "RegExp:^[a-z]+$", false);
+define_f10_test!(test_f10_scenario_10, Val::Func("my_func".to_string()), "my_func", false);
+
+// Empty composites
+define_f10_test!(test_f10_scenario_11, Val::Array(vec![]), "[]", false);
+define_f10_test!(test_f10_scenario_12, Val::Object(BTreeMap::new()), "Object{}", false);
+define_f10_test!(test_f10_scenario_13, Val::Map(BTreeMap::new()), "Map:[]", false);
+define_f10_test!(test_f10_scenario_14, Val::Set(BTreeSet::new()), "Set:[]", false);
+
+// Simple composites
+define_f10_test!(test_f10_scenario_15, Val::Array(vec![Val::Number(1.0), Val::Number(2.0)]), "[1,2]", false);
+define_f10_test!(test_f10_scenario_16, Val::Set({
+    let mut s = BTreeSet::new();
+    s.insert("b".to_string());
+    s.insert("a".to_string());
+    s
+}), "Set:[a,b]", false); // Sorted check
+
+define_f10_test!(test_f10_scenario_17, Val::Map({
+    let mut m = BTreeMap::new();
+    m.insert("y".to_string(), Val::Number(2.0));
+    m.insert("x".to_string(), Val::Number(1.0));
+    m.clone()
+}), "Map:[[x,1],[y,2]]", false); // Sorted check
+
+define_f10_test!(test_f10_scenario_18, Val::Object({
+    let mut o = BTreeMap::new();
+    o.insert("a".to_string(), Val::String("val_a".to_string()));
+    o
+}), "Object{a:val_a}", false);
+
+// Recursion depths - array tests (0 to 10)
+define_f10_test!(test_f10_scenario_19, create_nested_array(0), "null", false);
+define_f10_test!(test_f10_scenario_20, create_nested_array(1), "[null]", false);
+define_f10_test!(test_f10_scenario_21, create_nested_array(2), "[[null]]", false);
+define_f10_test!(test_f10_scenario_22, create_nested_array(3), "[[[null]]]", false);
+define_f10_test!(test_f10_scenario_23, create_nested_array(4), "[[[[null]]]]", false);
+define_f10_test!(test_f10_scenario_24, create_nested_array(5), "[[[[[null]]]]]", false);
+define_f10_test!(test_f10_scenario_25, create_nested_array(6), "[[[[[[[Object...]]]]]]]", true); // Collapsed
+define_f10_test!(test_f10_scenario_26, create_nested_array(7), "[[[[[[[Object...]]]]]]]", true); // Collapsed
+define_f10_test!(test_f10_scenario_27, create_nested_array(8), "[[[[[[[Object...]]]]]]]", true); // Collapsed
+define_f10_test!(test_f10_scenario_28, create_nested_array(9), "[[[[[[[Object...]]]]]]]", true); // Collapsed
+define_f10_test!(test_f10_scenario_29, create_nested_array(10), "[[[[[[[Object...]]]]]]]", true); // Collapsed
+
+// Recursion depths - object tests (0 to 10)
+define_f10_test!(test_f10_scenario_30, create_nested_object(0), "null", false);
+define_f10_test!(test_f10_scenario_31, create_nested_object(1), "Object{key_0:null}", false);
+define_f10_test!(test_f10_scenario_32, create_nested_object(2), "Object{key_1:Object{key_0:null}}", false);
+define_f10_test!(test_f10_scenario_33, create_nested_object(3), "Object{key_2:Object{key_1:Object{key_0:null}}}", false);
+define_f10_test!(test_f10_scenario_34, create_nested_object(4), "Object{key_3:Object{key_2:Object{key_1:Object{key_0:null}}}}", false);
+define_f10_test!(test_f10_scenario_35, create_nested_object(5), "Object{key_4:Object{key_3:Object{key_2:Object{key_1:Object{key_0:null}}}}}", false);
+define_f10_test!(test_f10_scenario_36, create_nested_object(6), "Object{key_5:Object{key_4:Object{key_3:Object{key_2:Object{key_1:Object{key_0:[Object...]}}}}}}", true); // Collapsed
+define_f10_test!(test_f10_scenario_37, create_nested_object(7), "Object{key_6:Object{key_5:Object{key_4:Object{key_3:Object{key_2:Object{key_1:[Object...]}}}}}}", true); // Collapsed
+define_f10_test!(test_f10_scenario_38, create_nested_object(8), "Object{key_7:Object{key_6:Object{key_5:Object{key_4:Object{key_3:Object{key_2:[Object...]}}}}}}", true); // Collapsed
+define_f10_test!(test_f10_scenario_39, create_nested_object(9), "Object{key_8:Object{key_7:Object{key_6:Object{key_5:Object{key_4:Object{key_3:[Object...]}}}}}}", true); // Collapsed
+define_f10_test!(test_f10_scenario_40, create_nested_object(10), "Object{key_9:Object{key_8:Object{key_7:Object{key_6:Object{key_5:Object{key_4:[Object...]}}}}}}", true); // Collapsed
+
+// Complicated composites / mixtures
+define_f10_test!(test_f10_scenario_41, Val::Array(vec![Val::Null, Val::Undefined]), "[null,undefined]", false);
+define_f10_test!(test_f10_scenario_42, Val::Array(vec![Val::Boolean(true), Val::Boolean(false)]), "[true,false]", false);
+define_f10_test!(test_f10_scenario_43, Val::Array(vec![Val::Number(0.0), Val::Number(-1.25)]), "[0,-1.25]", false);
+define_f10_test!(test_f10_scenario_44, Val::Array(vec![Val::String("".to_string()), Val::String(" ".to_string())]), "[, ]", false);
+define_f10_test!(test_f10_scenario_45, Val::Array(vec![Val::BigInt(0), Val::BigInt(-999)]), "[BigInt:0,BigInt:-999]", false);
+define_f10_test!(test_f10_scenario_46, Val::Array(vec![Val::Date(0), Val::Date(9999999999)]), "[Date:0,Date:9999999999]", false);
+define_f10_test!(test_f10_scenario_47, Val::Array(vec![Val::RegExp("re1".to_string()), Val::RegExp("re2".to_string())]), "[RegExp:re1,RegExp:re2]", false);
+define_f10_test!(test_f10_scenario_48, Val::Array(vec![Val::Func("f1".to_string()), Val::Func("f2".to_string())]), "[f1,f2]", false);
+define_f10_test!(test_f10_scenario_49, Val::Array(vec![Val::Array(vec![]), Val::Object(BTreeMap::new())]), "[[],Object{}]", false);
+define_f10_test!(test_f10_scenario_50, Val::Array(vec![Val::Set(BTreeSet::new()), Val::Map(BTreeMap::new())]), "[Set:[],Map:[]]", false);
 
 #[test]
 fn test_tier_m_calibration() {

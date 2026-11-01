@@ -1,0 +1,10 @@
+name: stress-fail
+on:
+  pull_request:
+    paths:
+      - 'stress-fail-trigger.txt'
+jobs:
+  stress-fail-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1

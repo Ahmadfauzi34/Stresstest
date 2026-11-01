@@ -1,0 +1,13 @@
+name: stress-pass
+on:
+  pull_request:
+jobs:
+  stress-pass-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo stress-pass-ok
+  stress-skip-job:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo never-runs

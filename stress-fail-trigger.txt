@@ -1,0 +1,2 @@
+D1: file ini memicu workflow stress-fail (path filter).
+Isi bebas, yang penting path-nya.

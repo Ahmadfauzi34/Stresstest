@@ -1,0 +1,2 @@
+stress-a3: file kedua, push update fast-forward ke cabang yang sudah ada.
+Tujuan: A3 membuktikan push ke cabang existing bergerak maju tanpa membuat cabang baru.

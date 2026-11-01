@@ -1,0 +1,3 @@
+stress-a1: push cabang baru, satu file kecil.
+Tujuan: uji live pertama helper push gh_api.py (yang selama ini belum pernah push live).
+Repo: Ahmadfauzi34/Stresstest, cabang: stress/a1-small, base: main.

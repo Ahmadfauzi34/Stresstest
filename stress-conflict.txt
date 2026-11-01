@@ -1,3 +1,3 @@
 stress-conflict: baris pertama sama
-stress-conflict: baris kedua versi BASE
+stress-conflict: baris kedua diubah sisi X
 stress-conflict: baris ketiga sama

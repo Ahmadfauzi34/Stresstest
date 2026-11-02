@@ -1,0 +1,2 @@
+D3: file normal saja, tanpa trigger fail maupun slow.
+PR ini seharusnya hanya menjalankan pass+skip.

@@ -1,0 +1,10 @@
+name: stress-slow
+on:
+  pull_request:
+    paths:
+      - 'stress-slow-trigger.txt'
+jobs:
+  stress-slow-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 90 && echo stress-slow-done
